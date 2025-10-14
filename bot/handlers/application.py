@@ -27,8 +27,8 @@ from bot.utils import (
     validate_full_name,
     validate_text,
     generate_excel,
-    send_email,
-    send_to_telegram
+    send_email
+    # send_to_telegram  # ОТКЛЮЧЕНО: не используется после отключения отправки в Telegram чат
 )
 
 logger = logging.getLogger(__name__)
@@ -417,23 +417,25 @@ async def confirm_application(callback: CallbackQuery, state: FSMContext, sessio
         )
         application.email_sent = email_sent
         
-        # Отправляем в Telegram
-        telegram_message = (
-            f"📝 Новая заявка на служебную поездку\n\n"
-            f"От: {user.full_name or user.first_name} {user.last_name or ''}\n"
-            f"Username: @{user.username or 'N/A'}\n\n"
-            f"Вид спорта: {data.get('sport_type')}\n"
-            f"Ранг: {data.get('event_rank')}\n"
-            f"Направление: {data.get('country')}, {data.get('city')}\n"
-            f"Участников: {len(data.get('participants', []))}"
-        )
-        
-        telegram_sent = await send_to_telegram(
-            bot=callback.bot,
-            message=telegram_message,
-            attachment_path=excel_path
-        )
-        application.telegram_sent = telegram_sent
+        # # ОТКЛЮЧЕНО: Отправка в Telegram чат (TARGET_CHAT_ID)
+        # # Оставлена только отправка на email
+        # telegram_message = (
+        #     f"📝 Новая заявка на служебную поездку\n\n"
+        #     f"От: {user.full_name or user.first_name} {user.last_name or ''}\n"
+        #     f"Username: @{user.username or 'N/A'}\n\n"
+        #     f"Вид спорта: {data.get('sport_type')}\n"
+        #     f"Ранг: {data.get('event_rank')}\n"
+        #     f"Направление: {data.get('country')}, {data.get('city')}\n"
+        #     f"Участников: {len(data.get('participants', []))}"
+        # )
+        # 
+        # telegram_sent = await send_to_telegram(
+        #     bot=callback.bot,
+        #     message=telegram_message,
+        #     attachment_path=excel_path
+        # )
+        # application.telegram_sent = telegram_sent
+        telegram_sent = False  # Отправка в Telegram отключена
         
         await session.commit()
         
@@ -446,8 +448,7 @@ async def confirm_application(callback: CallbackQuery, state: FSMContext, sessio
         await processing_msg.edit_text(
             "✅ <b>Заявка успешно отправлена!</b>\n\n"
             f"ID заявки: {application.id}\n"
-            f"Email: {'✅' if email_sent else '❌'}\n"
-            f"Telegram: {'✅' if telegram_sent else '❌'}\n\n"
+            f"Email: {'✅' if email_sent else '❌'}\n\n"
             "Вы можете посмотреть историю заявок в меню.",
             parse_mode="HTML"
         )
@@ -476,10 +477,70 @@ async def edit_application(callback: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data == "confirm_draft", StateFilter(ApplicationStates.confirm))
-async def save_draft(callback: CallbackQuery, state: FSMContext):
+async def save_draft(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
     """Сохранение черновика"""
-    await callback.answer("Функция сохранения черновиков в разработке")
-    # TODO: Реализовать сохранение черновика
+    await callback.answer()
+    await callback.message.edit_reply_markup(reply_markup=None)
+    
+    try:
+        data = await state.get_data()
+        user_id = callback.from_user.id
+        
+        # Получаем пользователя
+        result = await session.execute(
+            select(User).where(User.telegram_id == user_id)
+        )
+        user = result.scalar_one()
+        
+        # Создаем черновик заявки
+        draft = Application(
+            user_id=user_id,
+            sport_type=data.get("sport_type"),
+            event_rank=data.get("event_rank"),
+            country=data.get("country"),
+            city=data.get("city"),
+            participants_data={"participants": data.get("participants", [])},
+            status=ApplicationStatus.DRAFT,  # Статус черновика
+            submitted_at=None
+        )
+        session.add(draft)
+        
+        # Добавляем участников
+        for idx, p in enumerate(data.get("participants", []), 1):
+            participant = Participant(
+                application_id=draft.id,
+                full_name=p["full_name"],
+                date_from=p["date_from"],
+                date_to=p["date_to"],
+                order_num=idx
+            )
+            session.add(participant)
+        
+        await session.commit()
+        
+        # Очищаем состояние
+        await state.clear()
+        
+        # Определяем клавиатуру
+        keyboard = get_admin_menu() if user.is_admin else get_main_menu()
+        
+        await callback.message.answer(
+            f"✅ <b>Черновик сохранён!</b>\n\n"
+            f"ID черновика: {draft.id}\n\n"
+            "Вы можете продолжить работу с ним позже через историю заявок.",
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении черновика: {e}", exc_info=True)
+        
+        keyboard = get_admin_menu() if callback.from_user.id in config.ADMIN_IDS else get_main_menu()
+        await callback.message.answer(
+            "❌ Произошла ошибка при сохранении черновика.\n"
+            "Попробуйте еще раз или обратитесь к администратору.",
+            reply_markup=keyboard
+        )
 
 
 async def cancel_application(message: Message, state: FSMContext):
