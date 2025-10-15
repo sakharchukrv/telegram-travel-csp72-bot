@@ -3,6 +3,7 @@
 """
 import logging
 import os
+import asyncio
 from datetime import datetime
 from aiogram import Router, F
 from aiogram.filters import Command, StateFilter
@@ -418,7 +419,7 @@ async def confirm_application(callback: CallbackQuery, state: FSMContext, sessio
         
         await session.commit()
         
-        # Генерируем Excel
+        # Генерируем Excel (в отдельном потоке для безопасности)
         excel_data = {
             "sport_type": data.get("sport_type"),
             "event_rank": data.get("event_rank"),
@@ -427,7 +428,7 @@ async def confirm_application(callback: CallbackQuery, state: FSMContext, sessio
             "participants": data.get("participants", [])
         }
         
-        excel_path = generate_excel(excel_data)
+        excel_path = await asyncio.to_thread(generate_excel, excel_data)
         application.excel_file_path = excel_path
         
         # Отправляем Email
@@ -526,29 +527,72 @@ async def save_draft(callback: CallbackQuery, state: FSMContext, session: AsyncS
         )
         user = result.scalar_one()
         
-        # Создаем черновик заявки
-        draft = Application(
-            user_id=user_id,
-            sport_type=data.get("sport_type"),
-            event_rank=data.get("event_rank"),
-            country=data.get("country"),
-            city=data.get("city"),
-            participants_data={"participants": data.get("participants", [])},
-            status=ApplicationStatus.DRAFT,  # Статус черновика
-            submitted_at=None
-        )
-        session.add(draft)
+        # Проверяем, обновляем ли мы существующий черновик
+        draft_id = data.get("draft_id")
         
-        # Добавляем участников
-        for idx, p in enumerate(data.get("participants", []), 1):
-            participant = Participant(
-                application_id=draft.id,
-                full_name=p["full_name"],
-                date_from=p["date_from"],
-                date_to=p["date_to"],
-                order_num=idx
+        if draft_id:
+            # Обновляем существующий черновик
+            result = await session.execute(
+                select(Application).where(
+                    Application.id == draft_id,
+                    Application.user_id == user_id,
+                    Application.status == ApplicationStatus.DRAFT
+                )
             )
-            session.add(participant)
+            draft = result.scalar_one_or_none()
+            
+            if draft:
+                # Обновляем данные
+                draft.sport_type = data.get("sport_type")
+                draft.event_rank = data.get("event_rank")
+                draft.country = data.get("country")
+                draft.city = data.get("city")
+                draft.participants_data = {"participants": data.get("participants", [])}
+                
+                # Удаляем старых участников
+                for participant in draft.participants:
+                    await session.delete(participant)
+                
+                await session.flush()
+                
+                # Добавляем новых участников
+                for idx, p in enumerate(data.get("participants", []), 1):
+                    participant = Participant(
+                        application_id=draft.id,
+                        full_name=p["full_name"],
+                        date_from=p["date_from"],
+                        date_to=p["date_to"],
+                        order_num=idx
+                    )
+                    session.add(participant)
+            else:
+                draft_id = None  # Черновик не найден, создадим новый
+        
+        if not draft_id:
+            # Создаем новый черновик заявки
+            draft = Application(
+                user_id=user_id,
+                sport_type=data.get("sport_type"),
+                event_rank=data.get("event_rank"),
+                country=data.get("country"),
+                city=data.get("city"),
+                participants_data={"participants": data.get("participants", [])},
+                status=ApplicationStatus.DRAFT,  # Статус черновика
+                submitted_at=None
+            )
+            session.add(draft)
+            await session.flush()  # ВАЖНО: Flush чтобы получить draft.id
+            
+            # Добавляем участников
+            for idx, p in enumerate(data.get("participants", []), 1):
+                participant = Participant(
+                    application_id=draft.id,
+                    full_name=p["full_name"],
+                    date_from=p["date_from"],
+                    date_to=p["date_to"],
+                    order_num=idx
+                )
+                session.add(participant)
         
         await session.commit()
         
@@ -561,7 +605,7 @@ async def save_draft(callback: CallbackQuery, state: FSMContext, session: AsyncS
         await callback.message.answer(
             f"✅ <b>Черновик сохранён!</b>\n\n"
             f"ID черновика: {draft.id}\n\n"
-            "Вы можете продолжить работу с ним позже через историю заявок.",
+            "Вы можете продолжить работу с ним позже через меню '💾 Мои черновики'.",
             parse_mode="HTML",
             reply_markup=keyboard
         )
