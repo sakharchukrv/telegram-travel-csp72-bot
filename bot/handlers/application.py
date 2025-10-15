@@ -350,6 +350,7 @@ async def confirm_application(callback: CallbackQuery, state: FSMContext, sessio
     try:
         data = await state.get_data()
         user_id = callback.from_user.id
+        draft_id = data.get("draft_id")  # Проверяем, продолжаем ли мы черновик
         
         # Получаем пользователя
         result = await session.execute(
@@ -357,30 +358,63 @@ async def confirm_application(callback: CallbackQuery, state: FSMContext, sessio
         )
         user = result.scalar_one()
         
-        # Создаем заявку
-        application = Application(
-            user_id=user_id,
-            sport_type=data.get("sport_type"),
-            event_rank=data.get("event_rank"),
-            country=data.get("country"),
-            city=data.get("city"),
-            participants_data={"participants": data.get("participants", [])},
-            status=ApplicationStatus.SUBMITTED,
-            submitted_at=datetime.now()
-        )
-        session.add(application)
-        await session.flush()
-        
-        # Добавляем участников
-        for idx, p in enumerate(data.get("participants", []), 1):
-            participant = Participant(
-                application_id=application.id,
-                full_name=p["full_name"],
-                date_from=p["date_from"],
-                date_to=p["date_to"],
-                order_num=idx
+        # Если это черновик, обновляем его, иначе создаем новую заявку
+        if draft_id:
+            # Обновляем существующий черновик
+            result = await session.execute(
+                select(Application).where(Application.id == draft_id)
             )
-            session.add(participant)
+            application = result.scalar_one()
+            
+            # Обновляем данные
+            application.sport_type = data.get("sport_type")
+            application.event_rank = data.get("event_rank")
+            application.country = data.get("country")
+            application.city = data.get("city")
+            application.participants_data = {"participants": data.get("participants", [])}
+            application.status = ApplicationStatus.SUBMITTED
+            application.submitted_at = datetime.now()
+            
+            # Удаляем старых участников
+            for p in application.participants:
+                await session.delete(p)
+            await session.flush()
+            
+            # Добавляем новых участников
+            for idx, p in enumerate(data.get("participants", []), 1):
+                participant = Participant(
+                    application_id=application.id,
+                    full_name=p["full_name"],
+                    date_from=p["date_from"],
+                    date_to=p["date_to"],
+                    order_num=idx
+                )
+                session.add(participant)
+        else:
+            # Создаем новую заявку
+            application = Application(
+                user_id=user_id,
+                sport_type=data.get("sport_type"),
+                event_rank=data.get("event_rank"),
+                country=data.get("country"),
+                city=data.get("city"),
+                participants_data={"participants": data.get("participants", [])},
+                status=ApplicationStatus.SUBMITTED,
+                submitted_at=datetime.now()
+            )
+            session.add(application)
+            await session.flush()
+            
+            # Добавляем участников
+            for idx, p in enumerate(data.get("participants", []), 1):
+                participant = Participant(
+                    application_id=application.id,
+                    full_name=p["full_name"],
+                    date_from=p["date_from"],
+                    date_to=p["date_to"],
+                    order_num=idx
+                )
+                session.add(participant)
         
         await session.commit()
         

@@ -1,23 +1,21 @@
 """
-Генератор Excel файлов по шаблону
+Генератор Excel файлов (упрощенная версия)
 """
 import logging
 import os
 from typing import Dict, List
 from datetime import datetime
-import shutil
 
 import openpyxl
+from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.worksheet.worksheet import Worksheet
-
-from bot.config import config
 
 logger = logging.getLogger(__name__)
 
 
 def generate_excel(application_data: Dict, output_dir: str = "/tmp") -> str:
     """
-    Генерация Excel файла по шаблону
+    Генерация Excel файла с упрощенной структурой
     
     Args:
         application_data: Данные заявки
@@ -26,71 +24,146 @@ def generate_excel(application_data: Dict, output_dir: str = "/tmp") -> str:
     Returns:
         str: Путь к сгенерированному файлу
     """
-    logger.info("Начинаем генерацию Excel файла")
-    
-    # Копируем шаблон
-    template_path = config.TEMPLATE_FILE
-    if not os.path.exists(template_path):
-        raise FileNotFoundError(f"Шаблон не найден: {template_path}")
+    logger.info("Начинаем генерацию Excel файла (упрощенная версия)")
     
     # Генерируем имя выходного файла
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_filename = f"Заявка_{application_data.get('city', 'Unknown')}_{timestamp}.xlsx"
+    city = application_data.get('city', 'Unknown').replace('/', '_')
+    output_filename = f"Заявка_{city}_{timestamp}.xlsx"
     output_path = os.path.join(output_dir, output_filename)
     
-    # Копируем шаблон
-    shutil.copy2(template_path, output_path)
+    # Создаем новую книгу
+    wb = openpyxl.Workbook()
+    ws: Worksheet = wb.active
+    ws.title = "Заявка на СМ"
     
-    # Открываем файл для редактирования
-    wb = openpyxl.load_workbook(output_path)
+    # Настройка стилей
+    header_font = Font(name='Arial', size=12, bold=True)
+    normal_font = Font(name='Arial', size=11)
+    title_font = Font(name='Arial', size=14, bold=True)
     
-    # Работаем с листом "Версия для печати"
-    ws: Worksheet = wb["Версия для печати"]
+    header_fill = PatternFill(start_color="CCE5FF", end_color="CCE5FF", fill_type="solid")
     
-    # Функция для безопасной записи в ячейку (обработка объединенных ячеек)
-    def write_to_cell(cell_ref: str, value):
-        """Безопасная запись в ячейку, даже если она объединена"""
-        try:
-            cell = ws[cell_ref]
-            # Если ячейка объединена, найдём базовую ячейку
-            for merged_range in ws.merged_cells.ranges:
-                if cell.coordinate in merged_range:
-                    # Записываем в первую ячейку диапазона
-                    top_left_cell = ws.cell(merged_range.min_row, merged_range.min_col)
-                    top_left_cell.value = value
-                    return
-            # Если не объединена, пишем напрямую
-            cell.value = value
-        except Exception as e:
-            logger.warning(f"Не удалось записать в ячейку {cell_ref}: {e}")
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
     
-    # Заполняем основные поля
-    write_to_cell("B5", application_data.get("sport_type", ""))  # Вид спорта
-    write_to_cell("B7", application_data.get("event_rank", ""))  # Ранг мероприятия
-    write_to_cell("I5", application_data.get("city", ""))  # Город
-    write_to_cell("I7", application_data.get("country", ""))  # Страна
+    # Заголовок
+    ws['A1'] = "ЗАЯВКА НА СЛУЖЕБНУЮ ПОЕЗДКУ"
+    ws['A1'].font = title_font
+    ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
+    ws.merge_cells('A1:F1')
+    
+    # Дата создания
+    current_row = 2
+    ws[f'A{current_row}'] = f"Дата подачи: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+    ws[f'A{current_row}'].font = normal_font
+    
+    # Основная информация
+    current_row += 2
+    
+    # Вид спорта
+    ws[f'A{current_row}'] = "Вид спорта:"
+    ws[f'A{current_row}'].font = header_font
+    ws[f'A{current_row}'].fill = header_fill
+    ws[f'B{current_row}'] = application_data.get("sport_type", "")
+    ws[f'B{current_row}'].font = normal_font
+    ws.merge_cells(f'B{current_row}:F{current_row}')
+    current_row += 1
+    
+    # Ранг мероприятия
+    ws[f'A{current_row}'] = "Ранг мероприятия:"
+    ws[f'A{current_row}'].font = header_font
+    ws[f'A{current_row}'].fill = header_fill
+    ws[f'B{current_row}'] = application_data.get("event_rank", "")
+    ws[f'B{current_row}'].font = normal_font
+    ws.merge_cells(f'B{current_row}:F{current_row}')
+    current_row += 1
+    
+    # Страна
+    ws[f'A{current_row}'] = "Страна:"
+    ws[f'A{current_row}'].font = header_font
+    ws[f'A{current_row}'].fill = header_fill
+    ws[f'B{current_row}'] = application_data.get("country", "")
+    ws[f'B{current_row}'].font = normal_font
+    ws.merge_cells(f'B{current_row}:F{current_row}')
+    current_row += 1
+    
+    # Город
+    ws[f'A{current_row}'] = "Город:"
+    ws[f'A{current_row}'].font = header_font
+    ws[f'A{current_row}'].fill = header_fill
+    ws[f'B{current_row}'] = application_data.get("city", "")
+    ws[f'B{current_row}'].font = normal_font
+    ws.merge_cells(f'B{current_row}:F{current_row}')
+    current_row += 2
+    
+    # Таблица участников
+    ws[f'A{current_row}'] = "СПИСОК УЧАСТНИКОВ"
+    ws[f'A{current_row}'].font = header_font
+    ws[f'A{current_row}'].alignment = Alignment(horizontal='center', vertical='center')
+    ws.merge_cells(f'A{current_row}:F{current_row}')
+    current_row += 1
+    
+    # Заголовки таблицы
+    headers = ['№', 'ФИО участника', 'Дата начала', 'Дата окончания']
+    for col_idx, header in enumerate(headers, start=1):
+        cell = ws.cell(row=current_row, column=col_idx)
+        cell.value = header
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = thin_border
+    
+    current_row += 1
     
     # Заполняем участников
     participants: List[Dict] = application_data.get("participants", [])
     
-    for idx, participant in enumerate(participants):
-        # Определяем, в какую колонку писать (1-15 или 16-30)
-        if idx < 15:
-            # Первая колонка (строки 10-24)
-            row = 10 + idx
-            write_to_cell(f"B{row}", participant.get("full_name", ""))
-            write_to_cell(f"D{row}", participant.get("date_from", ""))
-            write_to_cell(f"E{row}", participant.get("date_to", ""))
-        else:
-            # Вторая колонка (строки 10-24)
-            row = 10 + (idx - 15)
-            write_to_cell(f"G{row}", participant.get("full_name", ""))
-            write_to_cell(f"I{row}", participant.get("date_from", ""))
-            write_to_cell(f"J{row}", participant.get("date_to", ""))
+    for idx, participant in enumerate(participants, start=1):
+        # Номер
+        cell = ws.cell(row=current_row, column=1)
+        cell.value = idx
+        cell.font = normal_font
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = thin_border
+        
+        # ФИО
+        cell = ws.cell(row=current_row, column=2)
+        cell.value = participant.get("full_name", "")
+        cell.font = normal_font
+        cell.border = thin_border
+        
+        # Дата начала
+        cell = ws.cell(row=current_row, column=3)
+        cell.value = participant.get("date_from", "")
+        cell.font = normal_font
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = thin_border
+        
+        # Дата окончания
+        cell = ws.cell(row=current_row, column=4)
+        cell.value = participant.get("date_to", "")
+        cell.font = normal_font
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = thin_border
+        
+        current_row += 1
+    
+    # Настройка ширины колонок
+    ws.column_dimensions['A'].width = 8
+    ws.column_dimensions['B'].width = 40
+    ws.column_dimensions['C'].width = 15
+    ws.column_dimensions['D'].width = 15
+    ws.column_dimensions['E'].width = 12
+    ws.column_dimensions['F'].width = 12
     
     # Сохраняем файл
     wb.save(output_path)
     wb.close()
     
-    logger.info(f"Excel файл успешно создан: {output_path}")
+    logger.info(f"Excel файл успешно создан (упрощенная версия): {output_path}")
     return output_path
